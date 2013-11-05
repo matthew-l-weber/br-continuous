@@ -38,10 +38,10 @@ my $report = "";
 my $reporttime = time;
 $ENV{LANG} = "C";
 
-my $emailFrom="johnDoe@foo.com";
-my $emailTo="johnDoe@foo.com";
-my $emailCc="list@foo.com";
-my $emailSMTPserver="mail.foo.com";
+my $emailFrom='johnDoe@foo.com';
+my $emailTo='johnDoe@foo.com';
+my $emailCc='list@foo.com';
+my $emailSMTPserver='mail.foo.com';
 
 # FIXME: Use Perl Template Toolkit
 my $html_header = <<'EOF';
