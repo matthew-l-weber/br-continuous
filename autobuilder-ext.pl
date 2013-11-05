@@ -38,6 +38,11 @@ my $report = "";
 my $reporttime = time;
 $ENV{LANG} = "C";
 
+my $emailFrom="johnDoe@foo.com";
+my $emailTo="johnDoe@foo.com";
+my $emailCc="list@foo.com";
+my $emailSMTPserver="mail.foo.com";
+
 # FIXME: Use Perl Template Toolkit
 my $html_header = <<'EOF';
 <?xml version="1.0"?>
@@ -47,6 +52,7 @@ my $html_header = <<'EOF';
     <title>Buildroot - Autobuilder</title>
     <meta http-equiv="content-type" content="text/html; charset=utf-8" />
     <meta name="robots" content="noindex">
+    <meta http-equiv="refresh" content="20" > 
     <link rel="stylesheet" type="text/css" href="css/jquery.dataTables.css">
     <script type="text/javascript" language="javascript" src="js/jquery.min.js"></script>
     <script type="text/javascript" language="javascript" src="js/jquery.dataTables.min.js"></script>
@@ -154,14 +160,14 @@ sub writeLine {
 sub sendReport {
     $reporttime = time; 
     my $msg = MIME::Lite->new(
-        From     => 'autobuilder@sysmic.org',
-        To       => 'jezz@sysmic.org',
-        # Cc       => 'list@buildroot.net',
+        From     => $emailFrom,
+        To       => $emailTo,
+        Cc       => $emailCc,
         Subject  => "Autobuild report of " . (strftime "%F", gmtime $reporttime),
         Data     => $report
     );
 
-    $msg->send;
+    $msg->send( "smtp", $emailSMTPserver );
     $report = "";
 }
 
@@ -200,6 +206,7 @@ sub getCfgList() {
     my %list;
     for (<cfgs/*/.config>) {
         my ($name) = m|cfgs/(.*)/.config|;
+        print("Found cfg: $name \n");
         $list{$name}{name} = "$name";
         $list{$name}{dir} = "../cfgs/$name";
         $list{$name}{inhibit} = (-e "cfgs/$name/inhibit") ? 1 : 0;
@@ -214,6 +221,9 @@ sub getCfgList() {
             $list{$name}{toolchain} = "external" if /^BR2_TOOLCHAIN_EXTERNAL=y$/;
             $list{$name}{toolchain} = "buildroot" if /^BR2_TOOLCHAIN_BUILDROOT=y$/;
         }
+        printf("  Arch: $list{$name}{arch}\n");
+        printf("  libc: $list{$name}{libc}\n");
+        printf("  Tool: $list{$name}{toolchain}\n");
         close $FILE;
     }
     return \%list;
@@ -496,7 +506,7 @@ sub dumpResults($$) {
     my $FILE;
     open $FILE, '>', "html/index.html" || die "html/index.html: $!";
     print $FILE $html_header;
-    print $FILE "<p><table id='data'>\n";
+    print $FILE "[Home]<a href='jobqueue.html'>[JobQueue]</a><p><table id='data'>\n";
     print $FILE "<thead><tr><th>Configuration</th><th>" . (join "</th><th>", sort keys %cfgs) . "</th></tr></thead>\n";
    
     for my $p (sort keys %pkgs) {
@@ -535,7 +545,7 @@ sub dumpJobQueue($$) {
     my $FILE;
     open $FILE, '>', "html/jobqueue.html" || die "jobqueue.html: $!";
     print $FILE $html_header;
-    print $FILE "<p><table>\n";
+    print $FILE "<a href='index.html'>[Home]</a>[JobQueue]<p><table>\n";
     print $FILE "<thead><tr><th>Place</th><th>Package</th><th>Config</th><th>Status</th><th>Buildreason</th><th>Date</th><th>Git id</th><th>Build duration</th></tr></thead>\n";
     my $idx = 0;
     for my $r (@jobs) {
@@ -681,6 +691,7 @@ sub build($$$) {
     dumpPkg $j->{pkg};
     dumpJobQueue($jobs, $jobidx);
 
+    system "chmod o+x $outdir -R"; #make index pages work
     my $exit_status;
     if (-x "cfgs/$cname/buildPkg") {
         $exit_status = system "cfgs/$cname/buildPkg cfgs/$cname $pname $outdir";
@@ -703,9 +714,19 @@ my $pkgs;
 my $cfgs;
 my $jobidx = 0;
 my $jobs;
+my $job_size = 0;
+
 
 print ((strftime "%T", localtime(time)) . " Get config list\n");
 $cfgs = getCfgList;
+
+# Cleanup previous build, TODO:make this cleaner....
+for my $c (values %$cfgs) {
+   print("Cleaning up old [$c->{name}]...\n");
+   system "$MAKE O=../cfgs/$c->{name} clean 2>&1 > /dev/null";
+   system "rm -f cfgs/$c->{name}/dirid";
+}
+system "rm -rf context results html";
 
 while (1) {
     if (time > $reporttime + (3600 * 24)) {
@@ -760,14 +781,22 @@ while (1) {
         print ((strftime "%T", localtime(time)) . " Compute job list\n");
         $jobs = getJobs $pkgs;
         $jobidx = 0;
+        $job_size = $#$jobs + 1;
+        print( "    Found $job_size Jobs...\n");
     } else {
         $jobidx++;
     }
-    print ((strftime "%T", localtime(time)) . " Dump job list\n");
-    dumpJobQueue($jobs, $jobidx);
-    print ((strftime "%T", localtime(time)) . " Build $jobidx: $jobs->[$jobidx]{cfg}{name}/$jobs->[$jobidx]{pkg}{name}\n");
-    build $jobs->[$jobidx], $jobs, $jobidx;
-    print ((strftime "%T", localtime(time)) . " Rebuild result for $jobs->[$jobidx]{pkg}{name}\n");
-    dumpPkg $jobs->[$jobidx]{pkg};
+    # Catch the jobs finished error loop
+    if ( $jobidx < $job_size ) {
+       print ((strftime "%T", localtime(time)) . " Dump job list\n");
+       dumpJobQueue($jobs, $jobidx);
+       print ((strftime "%T", localtime(time)) . " Build $jobidx: $jobs->[$jobidx]{cfg}{name}/$jobs->[$jobidx]{pkg}{name}\n");
+       build $jobs->[$jobidx], $jobs, $jobidx;
+       print ((strftime "%T", localtime(time)) . " Rebuild result for $jobs->[$jobidx]{pkg}{name}\n");
+       dumpPkg $jobs->[$jobidx]{pkg};
+    } else {
+       sleep(10);
+       print ( "Waiting for an update....\n");
+    }
     $rebuilddb = 0;
 }
