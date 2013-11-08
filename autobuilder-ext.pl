@@ -34,6 +34,8 @@ use strict;
 use File::Basename;
 use POSIX qw(strftime);
 use MIME::Lite;
+use Getopt::Std;
+use vars qw( $opt_s );
 my $report = "";
 my $reporttime = time;
 $ENV{LANG} = "C";
@@ -42,6 +44,19 @@ my $emailFrom='johnDoe@foo.com';
 my $emailTo='johnDoe@foo.com';
 my $emailCc='list@foo.com';
 my $emailSMTPserver='mail.foo.com';
+my $reportRateHrs=(3600 * 1);
+
+if( ! getopts('s' ) )
+{
+  printf "Usage: autobuilder-ext.pl <option>\n";
+  printf " -s    Single build all (non-continuous)\n";
+  die ".\n";
+}
+
+if( $opt_s )
+{
+  printf "Single build all requested...\n";
+}
 
 # FIXME: Use Perl Template Toolkit
 my $html_header = <<'EOF';
@@ -720,13 +735,11 @@ my $job_size = 0;
 print ((strftime "%T", localtime(time)) . " Get config list\n");
 $cfgs = getCfgList;
 
-# Cleanup previous build, TODO:make this cleaner....
+# Cleanup previous buildroot build but maintain history
 for my $c (values %$cfgs) {
    print("Cleaning up old [$c->{name}]...\n");
    system "$MAKE O=../cfgs/$c->{name} clean 2>&1 > /dev/null";
-   system "rm -f cfgs/$c->{name}/dirid";
 }
-system "rm -rf context results html";
 
 while (1) {
     if (time > $reporttime + (3600 * 24)) {
@@ -795,6 +808,13 @@ while (1) {
        print ((strftime "%T", localtime(time)) . " Rebuild result for $jobs->[$jobidx]{pkg}{name}\n");
        dumpPkg $jobs->[$jobidx]{pkg};
     } else {
+       # If a single build is requested, exit now and send report.
+       if( $opt_s )
+       {
+          sendReport;
+          print "Done...\n";
+          last; # Break out of main loop
+       }
        sleep(10);
        print ( "Waiting for an update....\n");
     }
